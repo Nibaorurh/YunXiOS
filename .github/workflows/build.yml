@@ -5,10 +5,6 @@ on:
   push:
     paths:
       - "**/*.zip"
-      - "**/*.swift"
-      - "**/*.plist"
-      - "**/*.pbxproj"
-      - "**/*.xcscheme"
       - ".github/workflows/build.yml"
 
 permissions:
@@ -16,414 +12,185 @@ permissions:
 
 jobs:
   build:
+    name: Build YunXiOS
     runs-on: macos-14
-    timeout-minutes: 45
 
     steps:
-      # =========================================================
-      # 1. 获取 GitHub 仓库
-      # =========================================================
+      # --------------------------------------------------
+      # 1. 拉取仓库
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # =========================================================
-      # 2. 选择可用的 Xcode
-      # =========================================================
+      # --------------------------------------------------
+      # 2. 选择 Xcode
+      # --------------------------------------------------
       - name: Select Xcode
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          echo "系统中的 Xcode："
-          find /Applications \
-            -maxdepth 1 \
-            -type d \
-            -name "Xcode*.app" \
-            -print \
-            | sort
+          echo "当前 macOS："
+          sw_vers
 
-          if [ -d "/Applications/Xcode_16.4.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode_16.4.app/Contents/Developer"
-          elif [ -d "/Applications/Xcode_16.3.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode_16.3.app/Contents/Developer"
-          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+          echo "可用 Xcode："
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+
+          if [ -d "/Applications/Xcode_16.2.app" ]; then
             sudo xcode-select -s "/Applications/Xcode_16.2.app/Contents/Developer"
           elif [ -d "/Applications/Xcode_16.1.app" ]; then
             sudo xcode-select -s "/Applications/Xcode_16.1.app/Contents/Developer"
           elif [ -d "/Applications/Xcode_16.0.app" ]; then
             sudo xcode-select -s "/Applications/Xcode_16.0.app/Contents/Developer"
           else
-            XCODE_APP=$(
-              find /Applications \
-                -maxdepth 1 \
-                -type d \
-                -name "Xcode*.app" \
-                -print \
-                | sort -V \
-                | tail -n 1
-            )
-
-            if [ -z "$XCODE_APP" ]; then
-              echo "没有找到 Xcode"
-              exit 1
-            fi
-
-            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+            echo "使用系统默认 Xcode"
           fi
-
-          echo "当前 Developer 路径："
-          xcode-select -p
 
           echo "Xcode 版本："
           xcodebuild -version
 
-      # =========================================================
-      # 3. 自动查找并解压完整源码
-      #
-      # 支持：
-      # A. 仓库里直接有 .xcodeproj
-      # B. 仓库里只有 YunXiOS-auto-build.zip
-      # C. ZIP 内还有一层 YunXiOS 文件夹
-      # D. ZIP 内还有多层目录
-      # =========================================================
-      - name: Find and prepare source
+      # --------------------------------------------------
+      # 3. 查找并解压完整源码 ZIP
+      # --------------------------------------------------
+      - name: Find and extract source
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          WORK_DIR="$RUNNER_TEMP/YunXiOSBuild"
-          SOURCE_DIR="$WORK_DIR/source"
+          SOURCE_DIR="$RUNNER_TEMP/YunXiOSSource"
 
-          rm -rf "$WORK_DIR"
+          rm -rf "$SOURCE_DIR"
           mkdir -p "$SOURCE_DIR"
 
-          echo "========================================"
-          echo "检查 GitHub 仓库"
-          echo "========================================"
+          echo "正在查找源码 ZIP..."
 
-          echo "仓库路径："
-          echo "$GITHUB_WORKSPACE"
-
-          echo
-          echo "仓库文件："
-          find "$GITHUB_WORKSPACE" \
-            -maxdepth 4 \
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
             -type f \
-            ! -path "*/.git/*" \
-            -print \
-            | sort
+            -iname "*.zip" \
+            -not -path "*/.git/*" \
+            | head -n 1)"
 
-          # -------------------------------------------------------
-          # 优先：直接查找仓库中的 .xcodeproj
-          # -------------------------------------------------------
-          DIRECT_XCODEPROJ=$(
-            find "$GITHUB_WORKSPACE" \
-              -type d \
-              -name "*.xcodeproj" \
-              ! -path "*/.git/*" \
-              -print \
-              | head -n 1 || true
-          )
-
-          if [ -n "$DIRECT_XCODEPROJ" ]; then
-            echo
-            echo "检测到仓库中直接存在 Xcode 工程："
-            echo "$DIRECT_XCODEPROJ"
-
-            DIRECT_PROJECT_ROOT="$(dirname "$DIRECT_XCODEPROJ")"
-
-            echo "项目根目录："
-            echo "$DIRECT_PROJECT_ROOT"
-
-            cp -R "$DIRECT_PROJECT_ROOT/." "$SOURCE_DIR/"
-
-          else
-
-            # -----------------------------------------------------
-            # 如果仓库没有 xcodeproj，就查找 ZIP
-            # -----------------------------------------------------
-            SOURCE_ZIP=$(
-              find "$GITHUB_WORKSPACE" \
-                -type f \
-                \( -iname "*.zip" -o -iname "*.ZIP" \) \
-                ! -path "*/.git/*" \
-                ! -name "*.ipa" \
-                -print \
-                | head -n 1 || true
-            )
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              echo
-              echo "========================================"
-              echo "错误：没有找到源码 ZIP，也没有找到 Xcode 工程"
-              echo "========================================"
-
-              find "$GITHUB_WORKSPACE" \
-                -maxdepth 5 \
-                -print
-
-              exit 1
-            fi
-
-            echo
-            echo "找到源码 ZIP："
-            echo "$SOURCE_ZIP"
-
-            echo
-            echo "开始解压："
-
-            unzip -oq "$SOURCE_ZIP" -d "$SOURCE_DIR"
-
-          fi
-
-          echo
-          echo "========================================"
-          echo "源码目录结构"
-          echo "========================================"
-
-          find "$SOURCE_DIR" \
-            -maxdepth 6 \
-            -print \
-            | sort
-
-          # -------------------------------------------------------
-          # 最终再次搜索真正的 xcodeproj
-          # -------------------------------------------------------
-          XCODEPROJ=$(
-            find "$SOURCE_DIR" \
-              -type d \
-              -name "*.xcodeproj" \
-              -print \
-              | head -n 1 || true
-          )
-
-          if [ -z "$XCODEPROJ" ]; then
-            echo
-            echo "错误：源码解压完成，但是没有找到 .xcodeproj"
-
-            find "$SOURCE_DIR" \
-              -maxdepth 8 \
-              -print
-
+          if [ -z "$ZIP_FILE" ]; then
+            echo "错误：没有找到 ZIP 源码文件"
+            echo "仓库文件列表："
+            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f | sort
             exit 1
           fi
 
-          PROJECT_ROOT="$(dirname "$XCODEPROJ")"
-          PROJECT_FILE="$(basename "$XCODEPROJ")"
+          echo "找到 ZIP："
+          echo "$ZIP_FILE"
 
-          echo
-          echo "========================================"
-          echo "最终工程信息"
-          echo "========================================"
+          unzip -q "$ZIP_FILE" -d "$SOURCE_DIR"
 
-          echo "XCODEPROJ=$XCODEPROJ"
-          echo "PROJECT_ROOT=$PROJECT_ROOT"
-          echo "PROJECT_FILE=$PROJECT_FILE"
+          echo "解压完成，查找 Xcode 工程："
+          find "$SOURCE_DIR" \
+            -name "*.xcodeproj" \
+            -o -name "*.xcworkspace" \
+            | sort
 
-          echo "WORK_DIR=$WORK_DIR" >> "$GITHUB_ENV"
-          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
-          echo "XCODEPROJ=$XCODEPROJ" >> "$GITHUB_ENV"
-          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
-          echo "PROJECT_FILE=$PROJECT_FILE"
+          echo "源码目录结构："
+          find "$SOURCE_DIR" -maxdepth 3 -type f | sort | head -300
 
-      # =========================================================
-      # 4. 获取 Scheme
-      # =========================================================
-      - name: Detect scheme
+      # --------------------------------------------------
+      # 4. 查找 Xcode 工程
+      # --------------------------------------------------
+      - name: Locate Xcode project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          echo "检查项目中的 Scheme："
+          SOURCE_DIR="$RUNNER_TEMP/YunXiOSSource"
 
-          find "$XCODEPROJ" \
-            -type f \
-            -name "*.xcscheme" \
-            -print || true
+          PROJECT_PATH="$(find "$SOURCE_DIR" \
+            -type d \
+            -name "*.xcodeproj" \
+            | head -n 1)"
 
-          # 优先使用 YunXiOS.xcscheme
-          SCHEME_FILE=$(
-            find "$XCODEPROJ" \
-              -type f \
-              -name "YunXiOS.xcscheme" \
-              -print \
-              | head -n 1 || true
-          )
-
-          if [ -n "$SCHEME_FILE" ]; then
-            SCHEME_NAME="YunXiOS"
-          else
-            # 如果没有共享 Scheme，则尝试从 xcodebuild -list 获取
-            PROJECT_LIST=$(
-              xcodebuild \
-                -list \
-                -project "$XCODEPROJ" 2>&1 \
-                || true
-            )
-
-            echo "$PROJECT_LIST"
-
-            SCHEME_NAME="YunXiOS"
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "错误：没有找到 .xcodeproj 工程"
+            find "$SOURCE_DIR" -type f | sort
+            exit 1
           fi
 
+          PROJECT_DIR="$(dirname "$PROJECT_PATH")"
+          PROJECT_NAME="$(basename "$PROJECT_PATH")"
+          SCHEME_NAME="${PROJECT_NAME%.xcodeproj}"
+
+          echo "PROJECT_PATH=$PROJECT_PATH" >> "$GITHUB_ENV"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
           echo "SCHEME_NAME=$SCHEME_NAME" >> "$GITHUB_ENV"
 
-          echo
-          echo "最终使用 Scheme：$SCHEME_NAME"
+          echo "工程路径：$PROJECT_PATH"
+          echo "工程目录：$PROJECT_DIR"
+          echo "工程名称：$PROJECT_NAME"
+          echo "Scheme：$SCHEME_NAME"
 
-      # =========================================================
-      # 5. 修复工程里的重复 Info.plist
-      #
-      # 你的原 project.pbxproj 中：
-      #
-      #   Info.plist
-      #       ↓
-      #   PBXBuildFile
-      #       ↓
-      #   Copy Bundle Resources
-      #
-      # 同时 Target 又设置：
-      #
-      #   INFOPLIST_FILE = App/Info.plist
-      #
-      # 这会导致 Xcode 报：
-      # Multiple commands produce Info.plist
-      #
-      # 这里直接从 PBXResourcesBuildPhase 删除 Info.plist
-      # =========================================================
-      - name: Fix Xcode project
+      # --------------------------------------------------
+      # 5. 显示工程信息
+      # --------------------------------------------------
+      - name: Show project information
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
 
-          PBXPROJ="$XCODEPROJ/project.pbxproj"
+          echo "检查工程信息："
 
-          if [ ! -f "$PBXPROJ" ]; then
-            echo "找不到 project.pbxproj"
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -list
+
+      # --------------------------------------------------
+      # 6. 检查 Scheme 是否存在
+      # --------------------------------------------------
+      - name: Check scheme
+        shell: bash
+        run: |
+          set -e
+
+          echo "检查 Scheme：$SCHEME_NAME"
+
+          if [ ! -d "$PROJECT_PATH" ]; then
+            echo "错误：工程不存在"
             exit 1
           fi
 
-          echo "原始 Info.plist 配置："
-          grep -n "Info.plist" "$PBXPROJ" || true
+          if [ ! -f "$PROJECT_PATH/project.pbxproj" ]; then
+            echo "错误：project.pbxproj 不存在"
+            exit 1
+          fi
 
-          cp "$PBXPROJ" "$PBXPROJ.backup"
+          echo "project.pbxproj 存在"
 
-          python3 - "$PBXPROJ" <<'PY'
-          import re
-          import sys
-          from pathlib import Path
+          SCHEME_FILE="$PROJECT_DIR/$PROJECT_NAME/xcshareddata/xcschemes/$SCHEME_NAME.xcscheme"
 
-          pbxproj = Path(sys.argv[1])
-          text = pbxproj.read_text(encoding="utf-8")
+          if [ -f "$SCHEME_FILE" ]; then
+            echo "找到共享 Scheme：$SCHEME_FILE"
+          else
+            echo "警告：没有找到共享 Scheme 文件"
+            echo "尝试使用 xcodebuild 列出 Scheme："
 
-          # -------------------------------------------------------
-          # 删除所有：
-          #
-          # <UUID> = {isa = PBXBuildFile;
-          #           fileRef = <Info.plist UUID>;
-          # };
-          #
-          # 并把对应 UUID 从 PBXResourcesBuildPhase 中删除。
-          # -------------------------------------------------------
+            xcodebuild \
+              -project "$PROJECT_PATH" \
+              -list
+          fi
 
-          plist_file_refs = set()
-
-          for match in re.finditer(
-              r'([A-F0-9]{24})\s*=\s*\{'
-              r'\s*isa\s*=\s*PBXFileReference;'
-              r'.*?'
-              r'path\s*=\s*"?Info\.plist"?;'
-              r'.*?\};',
-              text,
-              re.S
-          ):
-              plist_file_refs.add(match.group(1))
-
-          print("Info.plist FileReference UUID:")
-          for item in sorted(plist_file_refs):
-              print("  ", item)
-
-          plist_build_file_refs = set()
-
-          for plist_ref in plist_file_refs:
-              pattern = re.compile(
-                  rf'([A-F0-9]{{24}})\s*=\s*\{{'
-                  rf'\s*isa\s*=\s*PBXBuildFile;'
-                  rf'\s*fileRef\s*=\s*{plist_ref};'
-                  rf'.*?\}};',
-                  re.S
-              )
-
-              for match in pattern.finditer(text):
-                  plist_build_file_refs.add(match.group(1))
-
-          print("Info.plist BuildFile UUID:")
-          for item in sorted(plist_build_file_refs):
-              print("  ", item)
-
-          # -------------------------------------------------------
-          # 删除对应 PBXBuildFile
-          # -------------------------------------------------------
-          for build_uuid in plist_build_file_refs:
-
-              build_file_pattern = re.compile(
-                  rf'\s*{build_uuid}\s*=\s*\{{'
-                  rf'\s*isa\s*=\s*PBXBuildFile;'
-                  rf'.*?\}};',
-                  re.S
-              )
-
-              text = build_file_pattern.sub("", text)
-
-          # -------------------------------------------------------
-          # 删除 UUID 在 Resources phase 中的引用
-          # -------------------------------------------------------
-          for build_uuid in plist_build_file_refs:
-
-              text = re.sub(
-                  rf'\s*{build_uuid}\s*,',
-                  '',
-                  text
-              )
-
-              text = re.sub(
-                  rf'\s*{build_uuid}\s*',
-                  '',
-                  text
-              )
-
-          pbxproj.write_text(text, encoding="utf-8")
-
-          print("Info.plist 重复资源已清理")
-          PY
-
-          echo
-          echo "修复后的 Info.plist 配置："
-          grep -n "Info.plist" "$PBXPROJ" || true
-
-      # =========================================================
-      # 6. 检查工程
-      # =========================================================
+      # --------------------------------------------------
+      # 7. 验证工程
+      #
+      # 这里故意不执行 clean。
+      # 不设置 CONFIGURATION_BUILD_DIR。
+      # 避免 Xcode 删除自定义目录时失败。
+      # --------------------------------------------------
       - name: Validate project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          echo "工程：$XCODEPROJ"
-          echo "Scheme：$SCHEME_NAME"
-
-          echo
-          echo "Xcode project information："
+          echo "验证工程构建设置..."
 
           xcodebuild \
-            -list \
-            -project "$XCODEPROJ"
-
-          echo
-          echo "检查 Build Settings："
-
-          xcodebuild \
-            -project "$XCODEPROJ" \
+            -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
@@ -432,161 +199,165 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
-      # =========================================================
-      # 7. 编译 iOS App
-      # =========================================================
+      # --------------------------------------------------
+      # 8. 编译 iOS App
+      #
+      # 重要：
+      # 1. 不执行 xcodebuild clean
+      # 2. 不设置 CONFIGURATION_BUILD_DIR
+      # 3. 只使用 -derivedDataPath
+      # --------------------------------------------------
       - name: Build iOS app
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          DERIVED_DATA="$WORK_DIR/DerivedData"
-          BUILD_PRODUCTS="$WORK_DIR/Products"
+          DERIVED_DATA="$RUNNER_TEMP/YunXiOSDerivedData"
 
           rm -rf "$DERIVED_DATA"
-          rm -rf "$BUILD_PRODUCTS"
-
           mkdir -p "$DERIVED_DATA"
-          mkdir -p "$BUILD_PRODUCTS"
 
-          echo "开始编译："
-          echo "Project: $XCODEPROJ"
-          echo "Scheme: $SCHEME_NAME"
-          echo "Deployment target: iOS 16.2"
+          echo "开始编译 iOS App..."
+          echo "DerivedData：$DERIVED_DATA"
 
           xcodebuild \
-            -project "$XCODEPROJ" \
+            -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
-            -destination "generic/platform=iOS" \
             -derivedDataPath "$DERIVED_DATA" \
-            CONFIGURATION_BUILD_DIR="$BUILD_PRODUCTS" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            clean build
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64
 
-          echo
-          echo "编译完成，搜索 App："
+          echo "编译完成，查找 App..."
 
-          find "$BUILD_PRODUCTS" \
-            -maxdepth 3 \
+          APP_PATH="$(find "$DERIVED_DATA/Build/Products" \
             -type d \
             -name "*.app" \
-            -print
-
-          APP_PATH=$(
-            find "$BUILD_PRODUCTS" \
-              -type d \
-              -name "YunXiOS.app" \
-              -print \
-              | head -n 1
-          )
+            | head -n 1)"
 
           if [ -z "$APP_PATH" ]; then
-            echo
-            echo "错误：没有找到 YunXiOS.app"
+            echo "错误：没有找到编译出来的 .app"
 
-            find "$WORK_DIR" \
-              -maxdepth 8 \
-              -print
+            echo "Products 目录内容："
+            find "$DERIVED_DATA/Build/Products" -maxdepth 5 -print 2>/dev/null || true
+
+            echo "DerivedData 内容："
+            find "$DERIVED_DATA" -maxdepth 5 -print 2>/dev/null || true
 
             exit 1
           fi
 
-          echo
           echo "找到 App："
           echo "$APP_PATH"
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
-      # =========================================================
-      # 8. 检查生成的 App
-      # =========================================================
+      # --------------------------------------------------
+      # 9. 检查 App 文件
+      # --------------------------------------------------
       - name: Verify app
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          test -d "$APP_PATH"
-          test -f "$APP_PATH/Info.plist"
+          if [ -z "$APP_PATH" ]; then
+            echo "错误：APP_PATH 为空"
+            exit 1
+          fi
 
-          echo "App 大小："
-          du -sh "$APP_PATH"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "错误：App 不存在：$APP_PATH"
+            exit 1
+          fi
 
-          echo
-          echo "Bundle Identifier："
+          echo "App 路径：$APP_PATH"
 
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$APP_PATH/Info.plist"
+          echo "App 内容："
+          find "$APP_PATH" -maxdepth 2 -type f | sort | head -100
 
-          echo
-          echo "App Info："
+          echo "Info.plist 检查："
 
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleDisplayName" \
-            "$APP_PATH/Info.plist" \
-            2>/dev/null || true
+          if [ -f "$APP_PATH/Info.plist" ]; then
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleIdentifier" \
+              "$APP_PATH/Info.plist" || true
 
-      # =========================================================
-      # 9. 打包 IPA
-      # =========================================================
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleDisplayName" \
+              "$APP_PATH/Info.plist" || true
+
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleExecutable" \
+              "$APP_PATH/Info.plist" || true
+          else
+            echo "错误：App 中没有 Info.plist"
+            exit 1
+          fi
+
+      # --------------------------------------------------
+      # 10. 打包 IPA
+      # --------------------------------------------------
       - name: Package IPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          IPA_DIR="$WORK_DIR/IPABuild"
+          PACKAGE_DIR="$RUNNER_TEMP/YunXiOSPackage"
+          PAYLOAD_DIR="$PACKAGE_DIR/Payload"
+          IPA_PATH="$GITHUB_WORKSPACE/YunXiOS-unsigned.ipa"
 
-          rm -rf "$IPA_DIR"
-          mkdir -p "$IPA_DIR/Payload"
+          rm -rf "$PACKAGE_DIR"
+          rm -f "$IPA_PATH"
 
-          cp -R \
-            "$APP_PATH" \
-            "$IPA_DIR/Payload/YunXiOS.app"
+          mkdir -p "$PAYLOAD_DIR"
 
-          cd "$IPA_DIR"
+          echo "复制 App 到 Payload..."
 
-          zip \
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/YunXiOS.app"
+
+          cd "$PACKAGE_DIR"
+
+          echo "开始压缩 IPA..."
+
+          /usr/bin/zip \
             -qry \
-            "$GITHUB_WORKSPACE/YunXiOS-unsigned.ipa" \
+            "$IPA_PATH" \
             Payload
 
-          echo
-          echo "========================================"
-          echo "IPA 创建完成"
-          echo "========================================"
+          if [ ! -f "$IPA_PATH" ]; then
+            echo "错误：IPA 没有生成"
+            exit 1
+          fi
 
-          ls -lh "$GITHUB_WORKSPACE/YunXiOS-unsigned.ipa"
+          echo "IPA 生成成功："
+          ls -lh "$IPA_PATH"
 
-          echo
-          echo "SHA256："
+          echo "IPA 内容："
+          unzip -l "$IPA_PATH" | head -30
 
-          shasum \
-            -a 256 \
-            "$GITHUB_WORKSPACE/YunXiOS-unsigned.ipa"
-
-      # =========================================================
-      # 10. 上传 IPA
-      # =========================================================
+      # --------------------------------------------------
+      # 11. 上传 IPA
+      # --------------------------------------------------
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: YunXiOS-unsigned-ipa
+          name: YunXiOS-IPA
           path: YunXiOS-unsigned.ipa
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
-      # =========================================================
-      # 11. 同时上传 .app，方便排错
-      # =========================================================
+      # --------------------------------------------------
+      # 12. 上传 App 原包
+      # --------------------------------------------------
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: YunXiOS-app
+          name: YunXiOS-App
           path: ${{ env.APP_PATH }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
