@@ -1,0 +1,67 @@
+name: Build YunXiOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "YunXiOS-auto-build.zip"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract source
+        run: |
+          mkdir -p source
+          unzip -q YunXiOS-auto-build.zip -d source
+
+      - name: Find project directory
+        run: |
+          find source -name "YunXiOS.xcodeproj" -print
+
+      - name: Build iOS app
+        working-directory: source
+        run: |
+          PROJECT_DIR=$(dirname "$(find . -name 'YunXiOS.xcodeproj' -print -quit)")
+          cd "$PROJECT_DIR"
+
+          xcodebuild \
+            -project YunXiOS.xcodeproj \
+            -scheme YunXiOS \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        working-directory: source
+        run: |
+          PROJECT_DIR=$(dirname "$(find . -name 'YunXiOS.xcodeproj' -print -quit)")
+          cd "$PROJECT_DIR"
+
+          APP_PATH=$(find build -type d -path "*Release-iphoneos/YunXiOS.app" -print -quit)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "找不到编译生成的 YunXiOS.app"
+            find build -type d -name "*.app" -print
+            exit 1
+          fi
+
+          rm -rf Payload YunXiOS-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/YunXiOS.app
+          zip -qry YunXiOS-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YunXiOS-unsigned-ipa
+          path: source/**/YunXiOS-unsigned.ipa
+          if-no-files-found: error
