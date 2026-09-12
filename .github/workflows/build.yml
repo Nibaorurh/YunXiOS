@@ -1,0 +1,82 @@
+name: Build YunXiOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "**.zip"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract source
+        shell: bash
+        run: |
+          ZIP_PATH=$(find . -name "YunXiOS-auto-build.zip" -type f | head -n 1)
+
+          if [ -z "$ZIP_PATH" ]; then
+            echo "找不到 YunXiOS-auto-build.zip"
+            find . -maxdepth 4 -type f
+            exit 1
+          fi
+
+          echo "找到 ZIP: $ZIP_PATH"
+          mkdir -p extracted
+          unzip -q "$ZIP_PATH" -d extracted
+
+      - name: Locate Xcode project
+        shell: bash
+        run: |
+          PROJECT_PATH=$(find extracted -name "YunXiOS.xcodeproj" -type d | head -n 1)
+
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "找不到 YunXiOS.xcodeproj"
+            find extracted -maxdepth 5 -type d
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT_PATH")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "找到项目: $PROJECT_DIR"
+
+      - name: Build iOS app
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild \
+            -project YunXiOS.xcodeproj \
+            -scheme YunXiOS \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APP_PATH=$(find build -type d -path "*Release-iphoneos/YunXiOS.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "找不到编译出来的 YunXiOS.app"
+            find build -name "*.app" -type d
+            exit 1
+          fi
+
+          rm -rf Payload YunXiOS-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/YunXiOS.app
+          zip -qry YunXiOS-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: YunXiOS-unsigned-ipa
+          path: ${{ env.PROJECT_DIR }}/YunXiOS-unsigned.ipa
+          if-no-files-found: error
