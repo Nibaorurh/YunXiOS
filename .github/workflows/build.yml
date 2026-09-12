@@ -18,65 +18,122 @@ jobs:
       - name: Find and extract source
         shell: bash
         run: |
-          ZIP_PATH=$(find . -name "YunXiOS-auto-build.zip" -type f | head -n 1)
+          set -euo pipefail
 
-          if [ -z "$ZIP_PATH" ]; then
-            echo "找不到 YunXiOS-auto-build.zip"
-            find . -maxdepth 4 -type f
+          ZIP_FILE="$(find . -maxdepth 3 -type f -name '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "没有找到 ZIP 源码包"
             exit 1
           fi
 
-          echo "找到 ZIP: $ZIP_PATH"
+          echo "使用源码包：$ZIP_FILE"
           mkdir -p extracted
-          unzip -q "$ZIP_PATH" -d extracted
+          ditto -x -k "$ZIP_FILE" extracted
+
+          echo "解压后的目录："
+          find extracted -maxdepth 3 -type d
 
       - name: Locate Xcode project
         shell: bash
         run: |
-          PROJECT_PATH=$(find extracted -name "YunXiOS.xcodeproj" -type d | head -n 1)
+          set -euo pipefail
+
+          PROJECT_PATH="$(find extracted -name 'YunXiOS.xcodeproj' -type d | head -n 1)"
 
           if [ -z "$PROJECT_PATH" ]; then
-            echo "找不到 YunXiOS.xcodeproj"
-            find extracted -maxdepth 5 -type d
+            echo "没有找到 YunXiOS.xcodeproj"
+            find extracted -maxdepth 5 -type f | head -n 100
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT_PATH")
+          PROJECT_DIR="$(dirname "$PROJECT_PATH")"
+
+          echo "PROJECT_PATH=$PROJECT_PATH" >> "$GITHUB_ENV"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "找到项目: $PROJECT_DIR"
+
+          echo "工程路径：$PROJECT_PATH"
+
+      - name: Fix Xcode project plist configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_FILE="$PROJECT_PATH/project.pbxproj"
+
+          python3 - "$PROJECT_FILE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+
+          # 删除错误的 Info.plist PBXBuildFile 引用
+          lines = text.splitlines()
+          output = []
+
+          for line in lines:
+              if "F10C7314149C4E4EB90D953C = {isa = PBXBuildFile;" in line:
+                  continue
+              output.append(line)
+
+          text = "\n".join(output) + "\n"
+
+          text = text.replace(
+              "INFOPLIST_FILE = \"App/Info.plist\";",
+              "INFOPLIST_FILE = App/Info.plist;"
+          )
+
+          path.write_text(text)
+          print("已修复 project.pbxproj")
+
+          PY
+
+      - name: Show Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project "$PROJECT_PATH"
 
       - name: Build iOS app
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          mkdir -p "$PROJECT_DIR/build"
+
           xcodebuild \
-            -project YunXiOS.xcodeproj \
+            -project "$PROJECT_PATH" \
             -scheme YunXiOS \
-            -sdk iphoneos \
             -configuration Release \
-            -derivedDataPath build \
+            -sdk iphoneos \
+            -derivedDataPath "$PROJECT_DIR/build/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            clean build
 
       - name: Package IPA
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          APP_PATH=$(find build -type d -path "*Release-iphoneos/YunXiOS.app" | head -n 1)
+          set -euo pipefail
+
+          APP_PATH="$(find "$PROJECT_DIR/build/DerivedData" -type d -path '*/Build/Products/Release-iphoneos/YunXiOS.app' | head -n 1)"
 
           if [ -z "$APP_PATH" ]; then
-            echo "找不到编译出来的 YunXiOS.app"
-            find build -name "*.app" -type d
+            echo "没有找到编译生成的 YunXiOS.app"
+            find "$PROJECT_DIR/build" -type d -name '*.app'
             exit 1
           fi
 
-          rm -rf Payload YunXiOS-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/YunXiOS.app
-          zip -qry YunXiOS-unsigned.ipa Payload
+
+          /usr/bin/zip -r YunXiOS-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: YunXiOS-unsigned-ipa
-          path: ${{ env.PROJECT_DIR }}/YunXiOS-unsigned.ipa
+          name: YunXiOS-IPA
+          path: YunXiOS-unsigned.ipa
           if-no-files-found: error
