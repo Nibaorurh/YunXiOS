@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "**.zip"
+      - "**/*.zip"
       - ".github/workflows/build.yml"
 
 jobs:
@@ -15,125 +15,126 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.2.app || true
+          xcodebuild -version
+
       - name: Find and extract source
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          ZIP_FILE="$(find . -maxdepth 3 -type f -name '*.zip' | head -n 1)"
+          mkdir -p extracted
+
+          ZIP_FILE=$(find . -type f -name "*.zip" \
+            ! -path "./.git/*" \
+            ! -name "YunXiOS-auto-build.zip" \
+            | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "没有找到 ZIP 源码包"
+            echo "没有找到源码 ZIP 文件"
             exit 1
           fi
 
-          echo "使用源码包：$ZIP_FILE"
-          mkdir -p extracted
-          ditto -x -k "$ZIP_FILE" extracted
+          echo "使用源码压缩包：$ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d extracted
 
-          echo "解压后的目录："
-          find extracted -maxdepth 3 -type d
+          echo "解压后的文件："
+          find extracted -maxdepth 4 -type f | head -100
 
       - name: Locate Xcode project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          PROJECT_PATH="$(find extracted -name 'YunXiOS.xcodeproj' -type d | head -n 1)"
+          PROJECT_PATH=$(find extracted -name "*.xcodeproj" -type d | head -n 1)
 
           if [ -z "$PROJECT_PATH" ]; then
-            echo "没有找到 YunXiOS.xcodeproj"
-            find extracted -maxdepth 5 -type f | head -n 100
+            echo "没有找到 .xcodeproj 工程"
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$PROJECT_PATH")"
+          PROJECT_DIR=$(dirname "$PROJECT_PATH")
+          PROJECT_FILE=$(basename "$PROJECT_PATH")
 
           echo "PROJECT_PATH=$PROJECT_PATH" >> "$GITHUB_ENV"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_FILE=$PROJECT_FILE" >> "$GITHUB_ENV"
 
           echo "工程路径：$PROJECT_PATH"
 
-      - name: Fix Xcode project plist configuration
+      - name: Fix duplicate Info.plist resource
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          PROJECT_FILE="$PROJECT_PATH/project.pbxproj"
+          PBXPROJ="$PROJECT_PATH/project.pbxproj"
 
-          python3 - "$PROJECT_FILE" <<'PY'
-          import sys
-          from pathlib import Path
+          if [ -f "$PBXPROJ" ]; then
+            echo "修复重复的 Info.plist 资源引用"
 
-          path = Path(sys.argv[1])
-          text = path.read_text()
+            sed -i '' '/Info.plist in Resources/d' "$PBXPROJ" || true
 
-          # 删除错误的 Info.plist PBXBuildFile 引用
-          lines = text.splitlines()
-          output = []
+            echo "Info.plist 资源修复完成"
+          fi
 
-          for line in lines:
-              if "F10C7314149C4E4EB90D953C = {isa = PBXBuildFile;" in line:
-                  continue
-              output.append(line)
-
-          text = "\n".join(output) + "\n"
-
-          text = text.replace(
-              "INFOPLIST_FILE = \"App/Info.plist\";",
-              "INFOPLIST_FILE = App/Info.plist;"
-          )
-
-          path.write_text(text)
-          print("已修复 project.pbxproj")
-
-          PY
-
-      - name: Show Xcode project
+      - name: Validate project
         shell: bash
         run: |
-          set -euo pipefail
-          xcodebuild -list -project "$PROJECT_PATH"
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          xcodebuild \
+            -project "$PROJECT_FILE" \
+            -list
 
       - name: Build iOS app
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          mkdir -p "$PROJECT_DIR/build"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+
+          cd "$PROJECT_DIR"
 
           xcodebuild \
-            -project "$PROJECT_PATH" \
+            -project "$PROJECT_FILE" \
             -scheme YunXiOS \
-            -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath "$PROJECT_DIR/build/DerivedData" \
+            -configuration Release \
+            -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData" \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build/Products/Release-iphoneos" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            clean build
+            build
 
       - name: Package IPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          APP_PATH="$(find "$PROJECT_DIR/build/DerivedData" -type d -path '*/Build/Products/Release-iphoneos/YunXiOS.app' | head -n 1)"
+          APP_PATH="$GITHUB_WORKSPACE/build/Products/Release-iphoneos/YunXiOS.app"
 
-          if [ -z "$APP_PATH" ]; then
-            echo "没有找到编译生成的 YunXiOS.app"
-            find "$PROJECT_DIR/build" -type d -name '*.app'
+          if [ ! -d "$APP_PATH" ]; then
+            echo "没有找到 YunXiOS.app"
+            find "$GITHUB_WORKSPACE/build" -name "*.app" -print
             exit 1
           fi
 
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/YunXiOS.app
+          mkdir -p "$GITHUB_WORKSPACE/build/Payload"
+          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/build/Payload/"
 
-          /usr/bin/zip -r YunXiOS-unsigned.ipa Payload
+          cd "$GITHUB_WORKSPACE/build"
+          zip -qry YunXiOS-unsigned.ipa Payload
+
+          echo "IPA 打包完成"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: YunXiOS-IPA
-          path: YunXiOS-unsigned.ipa
+          path: build/YunXiOS-unsigned.ipa
           if-no-files-found: error
