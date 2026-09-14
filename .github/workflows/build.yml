@@ -29,6 +29,12 @@ jobs:
           npx cap init OmniDisk com.omnidisk.app --web-dir www
           npx cap add ios
 
+      - name: 修复并安装 CocoaPods 依赖
+        run: |
+          cd ios/App
+          pod repo update
+          pod install
+
       - name: 编译无签名 IPA (巨魔专用)
         run: |
           cd ios/App
