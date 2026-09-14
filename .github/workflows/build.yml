@@ -32,8 +32,7 @@ jobs:
       - name: 修复并安装 CocoaPods 依赖
         run: |
           cd ios/App
-          pod repo update
-          pod install
+          pod install --repo-update
 
       - name: 编译无签名 IPA (巨魔专用)
         run: |
