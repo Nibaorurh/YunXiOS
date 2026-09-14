@@ -17,11 +17,16 @@ jobs:
         with:
           node-version: 18
 
+      - name: 规范化网页目录
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+
       - name: 初始化移动端壳工程
         run: |
           npm init -y
           npm install @capacitor/core @capacitor/cli @capacitor/ios
-          npx cap init OmniDisk com.omnidisk.app --web-dir .
+          npx cap init OmniDisk com.omnidisk.app --web-dir www
           npx cap add ios
 
       - name: 编译无签名 IPA (巨魔专用)
