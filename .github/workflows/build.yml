@@ -1,0 +1,39 @@
+name: Build iOS IPA for TrollStore
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v3
+
+      - name: 配置 Node.js 环境
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: 初始化移动端壳工程
+        run: |
+          npm init -y
+          npm install @capacitor/core @capacitor/cli @capacitor/ios
+          npx cap init OmniDisk com.omnidisk.app --web-dir .
+          npx cap add ios
+
+      - name: 编译无签名 IPA (巨魔专用)
+        run: |
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -archivePath build/App.xcarchive archive
+          mkdir -p Payload
+          cp -r build/App.xcarchive/Products/Applications/App.app Payload/OmniDisk.app
+          zip -r OmniDisk.ipa Payload
+
+      - name: 上传编译好的 IPA 文件
+        uses: actions/upload-artifact@v3
+        with:
+          name: OmniDisk-TrollStore
+          path: ios/App/OmniDisk.ipa
