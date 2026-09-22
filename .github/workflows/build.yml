@@ -1,4 +1,4 @@
-ame: Build iOS IPA for TrollStore
+name: Build iOS IPA for TrollStore
 
 on:
   push:
