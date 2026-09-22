@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 核心修复 1：完美适配 iPhone 全面屏，禁止缩放，占满刘海/灵动岛区域 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>OmniDisk Pro</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        ios: { blue: '#007AFF', gray: '#F2F2F7', dark: '#000000', darkGray: '#1C1C1E', green: '#34C759', orange: '#FF9500' }
+                    }
+                }
+            }
+        }
+    </script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        /* 核心修复 3：消除网页感，强制原生手感 */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            -webkit-tap-highlight-color: transparent; /* 去除点击时讨厌的灰色闪烁 */
+            -webkit-touch-callout: none; /* 禁止长按弹出系统菜单 */
+            user-select: none; /* 禁止选中文本 */
+            overscroll-behavior-y: none; /* 禁止整个网页上下拉回弹 */
+            background-color: #F2F2F7; /* 强制浅色底色 */
+        }
+        
+        /* 强制深色底色，防止黑块 */
+        html.dark body { background-color: #000000; color: white; }
+        
+        .glass-effect { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        html.dark .glass-effect { background: rgba(30, 30, 30, 0.85); border-top: 1px solid rgba(255,255,255,0.1); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* 针对 512 线程滑块的特殊美化 */
+        input[type="range"] { -webkit-appearance: none; background: transparent; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 28px; height: 28px; background: white; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3); cursor: pointer; margin-top: -12px;}
+        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 5px; background: #d1d5db; border-radius: 3px; }
+        html.dark input[type="range"]::-webkit-slider-runnable-track { background: #374151; }
+        
+        /* 核心修复 2：底部导航栏安全区支持 (针对 iOS 底部白条) */
+        .safe-bottom-padding {
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+        }
+        /* 顶部刘海/灵动岛安全区支持 */
+        .safe-top-padding {
+            padding-top: calc(env(safe-area-inset-top, 44px) + 16px);
+        }
+    </style>
+</head>
+<body class="w-full h-screen overflow-hidden flex justify-center transition-colors duration-300">
+
+<div id="root" class="w-full h-full max-w-md relative shadow-2xl overflow-hidden flex flex-col"></div>
+
+<script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // 所有精美的 iOS 图标集
+    const Icons = {
+        Link: () => <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>,
+        Download: () => <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>,
+        Folder: () => <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>,
+        Accounts: () => <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>,
+        Settings: () => <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="none"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>,
+        Play: () => <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="white"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>,
+        CheckCircle: () => <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>,
+        Cloud: () => <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" strokeWidth="2" fill="none"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+    };
+
+    const App = () => {
+        // 全局状态管理
+        const [activeTab, setActiveTab] = useState('parse');
+        const [theme, setTheme] = useState('system');
+        const [url, setUrl] = useState('');
+        const [maxThreads, setMaxThreads] = useState(128); // 核心参数：巨魔512线程
+        const [toast, setToast] = useState({ show: false, msg: '' });
+        
+        // 数据列表
+        const [downloads, setDownloads] = useState([
+            { id: 1, name: "Spider-Man.No.Way.Home.mp4", size: "4.2 GB", progress: 65, speed: "18.5 MB/s" }
+        ]);
+
+        // 主题模式控制
+        useEffect(() => {
+            const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        }, [theme]);
+
+        const showToast = (msg) => {
+            setToast({ show: true, msg });
+            setTimeout(() => setToast({ show: false, msg: '' }), 2000);
+        };
+
+        // UI 渲染：解析模块
+        const renderParseView = () => (
+            <div className="px-5 safe-top-padding h-full overflow-y-auto pb-32">
+                <h2 className="text-[34px] font-bold mb-6 text-gray-900 dark:text-white tracking-tight">智能提取</h2>
+                <div className="bg-white dark:bg-ios-darkGray rounded-[20px] p-5 shadow-sm border border-gray-100 dark:border-gray-800">
+                    <label className="block text-[14px] font-semibold text-gray-500 dark:text-gray-400 mb-2">多网盘链接直链解析</label>
+                    <textarea 
+                        value={url} onChange={(e) => setUrl(e.target.value)}
+                        className="w-full bg-ios-gray dark:bg-black rounded-xl p-4 text-[16px] dark:text-white outline-none mb-6 h-32 resize-none"
+                        placeholder="支持百度、阿里、夸克、迅雷等..."
+                    ></textarea>
+                    
+                    <button onClick={() => showToast('获取直链成功！')} className="w-full bg-ios-blue active:bg-blue-600 text-white font-semibold text-[17px] py-4 rounded-xl shadow-md transition-transform active:scale-[0.98]">
+                        一键解析提取
+                    </button>
+                </div>
+            </div>
+        );
+
+        // UI 渲染：下载列表模块
+        const renderDownloadView = () => (
+            <div className="px-5 safe-top-padding h-full overflow-y-auto pb-32">
+                <h2 className="text-[34px] font-bold mb-6 text-gray-900 dark:text-white tracking-tight">极速下载</h2>
+                
+                {downloads.map(item => (
+                    <div key={item.id} className="bg-white dark:bg-ios-darkGray rounded-[20px] p-5 shadow-sm border border-gray-100 dark:border-gray-800">
+                        <div className="flex justify-between items-start mb-3">
+                            <p className="font-semibold text-[17px] text-gray-900 dark:text-white truncate w-[75%]">{item.name}</p>
+                            <span className="text-[13px] font-bold text-ios-blue">{item.progress}%</span>
+                        </div>
+                        <p className="text-[13px] text-gray-400 dark:text-gray-500 mb-4">{item.size} • 当前速度 {item.speed} ({maxThreads}线程)</p>
+                        <div className="w-full bg-ios-gray dark:bg-gray-800 rounded-full h-2">
+                            <div className="bg-ios-blue h-2 rounded-full transition-all duration-300" style={{ width: `${item.progress}%` }}></div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+
+        // UI 渲染：设置模块 (包含512多线程控制)
+        const renderSettingsView = () => (
+            <div className="px-5 safe-top-padding h-full overflow-y-auto pb-32">
+                <h2 className="text-[34px] font-bold mb-6 text-gray-900 dark:text-white tracking-tight">偏好设置</h2>
+                
+                {/* 巨魔极客特权：多线程控制 */}
+                <div className="mb-8">
+                    <h3 className="text-[14px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider ml-2 mb-2">巨魔极客特权</h3>
+                    <div className="bg-white dark:bg-ios-darkGray rounded-[20px] shadow-sm border border-gray-50 dark:border-gray-800 p-5">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-8 h-8 bg-orange-500 rounded-xl flex items-center justify-center text-white"><Icons.Cloud /></div>
+                                <span className="text-[17px] text-gray-900 dark:text-white font-medium">下载分片线程数</span>
+                            </div>
+                            <span className="text-[17px] font-bold text-ios-blue">{maxThreads} 线程</span>
+                        </div>
+                        <div className="flex items-center space-x-3 mt-4">
+                            <span className="text-[13px] text-gray-400">1</span>
+                            <input 
+                                type="range" min="1" max="512" 
+                                value={maxThreads} 
+                                onChange={(e) => setMaxThreads(parseInt(e.target.value))} 
+                                className="flex-1 h-2" 
+                            />
+                            <span className="text-[13px] text-gray-400">512</span>
+                        </div>
+                        <p className="text-[12px] text-orange-500 mt-4 font-medium leading-relaxed bg-orange-50 dark:bg-orange-900/20 p-3 rounded-xl">
+                            注：TrollStore 赋予 App 无限制沙盒特权。最高可开 512 线程并发抢占带宽。
+                        </p>
+                    </div>
+                </div>
+
+                {/* 外观设置 */}
+                <div className="mb-8">
+                    <h3 className="text-[14px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider ml-2 mb-2">外观</h3>
+                    <div className="bg-white dark:bg-ios-darkGray rounded-[20px] shadow-sm border border-gray-50 dark:border-gray-800 overflow-hidden">
+                        <div className="px-5 py-4 flex items-center justify-between">
+                            <span className="text-[17px] text-gray-900 dark:text-white">主题模式</span>
+                            <select 
+                                value={theme} 
+                                onChange={(e) => setTheme(e.target.value)} 
+                                className="bg-transparent text-[16px] text-ios-blue outline-none text-right appearance-none font-medium"
+                            >
+                                <option value="system">跟随系统</option>
+                                <option value="light">浅色模式</option>
+                                <option value="dark">暗黑模式</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        return (
+            <div className="w-full h-full flex flex-col relative text-left">
+                {/* 视图渲染区 */}
+                <div className="flex-1 overflow-hidden transition-colors duration-300">
+                    {activeTab === 'parse' && renderParseView()}
+                    {activeTab === 'download' && renderDownloadView()}
+                    {activeTab === 'settings' && renderSettingsView()}
+                </div>
+
+                {/* 底部导航栏：修复了大小和安全区域问题 */}
+                <div className="absolute bottom-0 w-full glass-effect border-t border-gray-200/50 dark:border-white/10 flex justify-around px-2 pt-3 safe-bottom-padding z-40">
+                    {[
+                        { id: 'parse', label: '解析提取', icon: Icons.Link },
+                        { id: 'download', label: '极速下载', icon: Icons.Download },
+                        { id: 'settings', label: '多线程设置', icon: Icons.Settings }
+                    ].map(tab => (
+                        <div 
+                            key={tab.id} 
+                            onClick={() => setActiveTab(tab.id)} 
+                            className="flex flex-col items-center justify-center w-20 min-h-[50px] cursor-pointer"
+                        >
+                            <div className={`transition-colors mb-1 ${activeTab === tab.id ? 'text-ios-blue' : 'text-gray-400'}`}>
+                                <tab.icon />
+                            </div>
+                            <span className={`text-[11px] font-medium transition-colors ${activeTab === tab.id ? 'text-ios-blue' : 'text-gray-500'}`}>
+                                {tab.label}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+
+                {/* 全局 Toast */}
+                {toast.show && (
+                    <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-[100] animate-[fadeIn_0.2s_ease-out]">
+                        <div className="bg-gray-800/90 text-white px-6 py-3 rounded-full shadow-2xl text-[15px] font-medium tracking-wide flex items-center">
+                            {toast.msg}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+
+<style>
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translate(-50%, 10px); }
+        to { opacity: 1; transform: translate(-50%, 0); }
+    }
+</style>
+</body>
+</html>
