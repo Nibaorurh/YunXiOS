@@ -1,0 +1,80 @@
+{
+  "images": [
+    {
+      "filename": "123pan.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "acfun.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "baidu.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "bilibili.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "c139.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "douyin.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "github.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "guangya.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "ilanzou.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "kuaishou.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "lanzou.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "pan115.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "pixiv.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "quark.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "uc.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "weibo.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "xhs.png",
+      "idiom": "universal"
+    },
+    {
+      "filename": "xunlei.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}
