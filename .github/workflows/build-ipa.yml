@@ -1,0 +1,80 @@
+name: Build IPA
+
+# 推送到 main 时自动构建；也可在 Actions 页面手动 Run workflow
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 自动定位工程目录：兼容「文件在仓库根目录」和「文件在 yunxi-ios/ 子目录」两种上传结果
+      - name: Locate project directory
+        run: |
+          if [ -f project.yml ]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          elif [ -f yunxi-ios/project.yml ]; then
+            echo "PROJECT_DIR=yunxi-ios" >> "$GITHUB_ENV"
+          else
+            echo "::error::project.yml not found (repo root or yunxi-ios/)"
+            find . -name project.yml -not -path './.git/*' || true
+            exit 1
+          fi
+          echo "Project dir: $PROJECT_DIR"
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i ios || true
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: xcodegen generate
+
+      - name: Build unsigned .app (iphoneos)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild \
+            -project YunXi.xcodeproj \
+            -scheme YunXi \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package IPA (TrollStore 无需签名)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -e
+          APP_PATH="$(find build -name 'YunXi.app' -type d | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::YunXi.app not found"
+            find build -maxdepth 3 -type d | head -50
+            exit 1
+          fi
+          echo "Packaging: $APP_PATH"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          rm -f YunXi.ipa
+          zip -q -r YunXi.ipa Payload
+          ls -lh YunXi.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YunXi-ipa
+          path: ${{ env.PROJECT_DIR }}/YunXi.ipa
+          if-no-files-found: error
+          retention-days: 7
